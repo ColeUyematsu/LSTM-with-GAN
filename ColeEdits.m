@@ -1,13 +1,13 @@
-% Fully updated version of GAN20250328_SGD using full-batch Gradient Descent
+% Fully updated version of GAN20250328_GD using full-batch Gradient Descent
 % *** MODIFIED FROM ORIGINAL: SGD replaced with GD ***
 % *** MODIFIED: Added LSTM layer integration ***
 
 function GAN20250328_GD
-    BigT=10;
-    BigN=5;
-    BigD=2;
-
-    n2=2;
+    BigT=10; % number of time steps 
+    BigN=5; % number of firms
+    BigD=2; %number of moment conditions = number of neurons in
+            % third layer of maximization network
+    n2=2; %number of neurons in second layer of both networks
     x1=[0.02	0.02	0.02	0.02	0.02;
     0.0195	0.0195	0.0195	0.0195	0.0195;
     0.019	0.019	0.019	0.019	0.019;
@@ -47,36 +47,29 @@ function GAN20250328_GD
     
     % Initialize weights and biases 
     rng(5000);
+    
     % start with Wx + b = approx 0 
-    x = [x1(1,1); x2(1,1)]
+    x = [x1(1,1); x2(1,1)];
     %replace random initial conditions
-    %W2o=0.5*randn(2,2);
-    %W3o=[1 1];
-    %b2o=-W2o*x;
-    %b3o=0;
-    %W2g=0.5*randn(2,2);
-    %W3g=0.5*randn(2,2);
-    %b2g=0.5*randn(2,1);
-    %b3g=0.5*randn(2,1);
-    W2g=[1 0; 0 1]
+    W2g=[1 0; 0 1];
     W3g=[1 0; 0 1];
     b2g=[0;0];
     b3g=[0;0];
     W3o=[1 1];
     W2o=[1 0; 0 1];
-    x=[x1(1, 1); x2(1,1)];
-
-    % add stuff here 
+    b2o=[0;0];
+    b3o=0;
     
     eta=2; %learning rate 
-    Niter=10; % number of SG iterations
-    maxiter=2; % number of GAN iterationsl; set to 1 in order to simplify
+    Niter=10; % number of GD iterations
+    maxiter=2; % number of GAN iterations; set to 1 in order to simplify
     savecostmin=zeros(Niter,1); % will show the progress of minimization 
     savecostmax=zeros(Niter,1);
     savecost=zeros(Niter,2);
     omega=zeros(BigT, BigN, 1);
     
     for iter=1:maxiter
+        % Calculate g for all firms and time steps
         for t=1:BigT
             for j=1:BigN
                 x=[x1(t,j);x2(t,j)];
@@ -85,81 +78,83 @@ function GAN20250328_GD
         end
     
         for counter=1:Niter
+            % Forward pass for all firms and time steps
             for t=1:BigT
                 for i=1:BigN
                     x=[x1(t,i);x2(t,i)];
-    
-                    % add LSTM layer
-    
                     a2otemp=activate(x,W2o,b2o);
                     a2o(t,i,:)=a2otemp;
                     a3o(t,i)=activate(a2otemp,W3o,b3o);
                     omega(t,i)=a3o(t,i);
                 end
             end
+            
+            % Backward pass
             delta3o=a3o.*(1-a3o);
             delta2o=a2o.*(1-a2o);
 
-            % add LSTM layer
-
-            for t=1:BigT
-                for i=1:BigN
-                    for Index_n2=1:n2
-                        delta2o(t,i,Index_n2)=delta2o(t,i,Index_n2)*(W3o(Index_n2)*delta3o(t,i));
+            % Initialize gradient accumulators
+            gradient_Sjdsq_total = zeros(1,9);
+            
+            % Process all firms and moment conditions
+            for j=1:BigN
+                for d=1:BigD
+                    % Calculate gradients for each firm and moment condition
+                    gradient_Sjdsq = zeros(1,9);
+                    
+                    for t=1:BigT
+                        for i=1:BigN
+                            for Index_n2=1:n2
+                                delta2o(t,i,Index_n2)=delta2o(t,i,Index_n2)*(W3o(Index_n2)*delta3o(t,i));
+                            end
+                            
+                            gradient_omega(t,i,1)= delta2o(t,i,1)*x1(t,i);
+                            gradient_omega(t,i,2)= delta2o(t,i,1)*x2(t,i);
+                            gradient_omega(t,i,3)= delta2o(t,i,2)*x1(t,i);
+                            gradient_omega(t,i,4)= delta2o(t,i,2)*x2(t,i);
+                            gradient_omega(t,i,5)= delta2o(t,i,1);
+                            gradient_omega(t,i,6)= delta2o(t,i,2);
+                            gradient_omega(t,i,7)= delta3o(t,i)*a2o(t,i,1);
+                            gradient_omega(t,i,8)= delta3o(t,i)*a2o(t,i,2);
+                            gradient_omega(t,i,9)= delta3o(t,i);
+                        end
                     end
-                    gradient_omega(t,i,1)= delta2o(t,i,1)*x1(t,i);
-                    gradient_omega(t,i,2)= delta2o(t,i,1)*x2(t,i);
-                    gradient_omega(t,i,3)= delta2o(t,i,2)*x1(t,i);
-                    gradient_omega(t,i,4)= delta2o(t,i,2)*x2(t,i);
-                    gradient_omega(t,i,5)= delta2o(t,i,1);
-                    gradient_omega(t,i,6)= delta2o(t,i,2);
-                    gradient_omega(t,i,7)= delta3o(t,i)*a2o(t,i,1);
-                    gradient_omega(t,i,8)= delta3o(t,i)*a2o(t,i,2);
-                    gradient_omega(t,i,9)= delta3o(t,i);
-
-                    % add stuff here gradient wrt parameters of LSTM 
+                    
+                    for coefftheta=1:9
+                        gradient_Sjdsq(coefftheta)=0;
+                        for t=1:BigT
+                            Sum_i_grad_om=0;
+                            for i=1:BigN
+                                Sum_i_grad_om=Sum_i_grad_om + gradient_omega(t,i,coefftheta)*Rexcess(t,i);
+                            end
+                            gradient_Sjdsq(coefftheta)=gradient_Sjdsq(coefftheta)+Rexcess(t,j)*g(t,j,d)*Sum_i_grad_om;
+                        end
+                    end
+                    gradient_Sjdsq=-fun_s_jd(Rexcess, x, j, d)*gradient_Sjdsq;
+                    
+                    % Accumulate gradients
+                    gradient_Sjdsq_total = gradient_Sjdsq_total + gradient_Sjdsq;
                 end
             end
             
-            %j=randi(5); %randomize firm
-            %storej(counter)=j;
-            %d=randi(2); %randomize moment condition
-            j=1;
-            storej(counter)=j;
-            %d=randi(2); %randomize moment condition
-            d=1;
-            stored(counter)=j;
-            %d=randi(2); %randomize moment condition
-            d=1;
-            stored(counter)=d;
-            for coefftheta=1:9
-                gradient_Sjdsq(coefftheta)=0;
-                for t=1:BigT
-                    Sum_i_grad_om=0;
-                    for i=1:BigN
-                        Sum_i_grad_om=Sum_i_grad_om + gradient_omega(t,i,coefftheta)*Rexcess(t,i);
-                    end
-                    gradient_Sjdsq(coefftheta)=gradient_Sjdsq(coefftheta)+Rexcess(t,j)*g(t,j,d)*Sum_i_grad_om;
-                end
-            end
-            gradient_Sjdsq=-fun_s_jd(Rexcess, x, j, d)*gradient_Sjdsq;
+            % Average gradients over all firms and moment conditions
+            gradient_Sjdsq_total = gradient_Sjdsq_total / (BigN * BigD);
+            
+            % Update weights and biases using full-batch gradient
+            W2o(1,1) = W2o(1,1) - eta * gradient_Sjdsq_total(1);
+            W2o(1,2) = W2o(1,2) - eta * gradient_Sjdsq_total(2);
+            W2o(2,1) = W2o(2,1) - eta * gradient_Sjdsq_total(3);
+            W2o(2,2) = W2o(2,2) - eta * gradient_Sjdsq_total(4);
 
-            % Set theta^{k+1} = theta^k - eta * nabla_theta_k L
-            W2o(1,1) = W2o(1,1) - eta * gradient_Sjdsq(1);
-            W2o(1,2) = W2o(1,2) - eta * gradient_Sjdsq(2);
-            W2o(2,1) = W2o(2,1) - eta * gradient_Sjdsq(3);
-            W2o(2,2) = W2o(2,2) - eta * gradient_Sjdsq(4);
+            b2o(1) = b2o(1) - eta * gradient_Sjdsq_total(5);
+            b2o(2) = b2o(2) - eta * gradient_Sjdsq_total(6);
 
-            b2o(1) = b2o(1) - eta * gradient_Sjdsq(5);
-            b2o(2) = b2o(2) - eta * gradient_Sjdsq(6);
+            W3o(1) = W3o(1) - eta * gradient_Sjdsq_total(7);
+            W3o(2) = W3o(2) - eta * gradient_Sjdsq_total(8);
 
-            W3o(1) = W3o(1) - eta * gradient_Sjdsq(7);
-            W3o(2) = W3o(2) - eta * gradient_Sjdsq(8);
+            b3o = b3o - eta * gradient_Sjdsq_total(9);
 
-            b3o = b3o - eta * gradient_Sjdsq(9);
-
-            % add update wrt parameters of LSTM
-
+            % Calculate cost for monitoring
             newcost=0;
             for j=1:BigN
                 newcost=newcost+fun_s_j(Rexcess, x,j);
@@ -167,12 +162,10 @@ function GAN20250328_GD
             savecostmin(counter)=newcost;
         end
     
+        % Calculate omega for all firms and time steps
         for t=1:BigT
             for i=1:BigN
                 x=[x1(t,i);x2(t,i)];
-    
-                %add LSTM layer
-    
                 a2otemp=activate(x,W2o,b2o);
                 a2o(t,i,:)=a2otemp;
                 a3o(t,i)=activate(a2otemp,W3o,b3o);
@@ -180,6 +173,7 @@ function GAN20250328_GD
             end
         end
     
+        % Calculate moment conditions
         for t=1:BigT
             inner(t)=0;
             for i=1:BigN
@@ -189,74 +183,85 @@ function GAN20250328_GD
         end
     end
 
+    % Generator updates using full-batch GD
     for counter = 1:Niter
-        % fixedj = randi(5); % randomize firm
-        % storej(counter) = fixedj;
-        % d = randi(2); % randomize moment condition
-        fixedj = 1;
-        storej(counter) = fixedj;
-        d = 1;
-        stored(counter) = d;
-    
-        % forward pass
-        for t = 1:BigT
-            x = [x1(t, fixedj); x2(t, fixedj)];
-            a2gtemp = activate(x, W2g, b2g);       % vector (n2)
-            a2g(t,:) = a2gtemp;                    % matrix (BigT, n2)
-            a3g(t,:,d) = activate(a2gtemp, W3g, b3g); % matrix dim (BigT, BigD)
-        end
-    
-        % backward pass
-        delta3g = a3g(:,:,d) .* (1 - a3g(:,:,d));     % matrix (BigT, BigD)
-        delta2g = a2g .* (1 - a2g);                   % matrix (BigT, n2)
-        
-        for t = 1:BigT
-            delta3g_chosen(t) = delta3g(t,d);              % vector (BigT)
-            W3g_chosen(:) = W3g(d,:);                      % vector (n2)
-            
-            for Index_n2 = 1:n2
-                delta2g_chosen(t, Index_n2) = ...
-                    delta2g(t, Index_n2) * W3g_chosen(Index_n2) * delta3g_chosen(t);
-            end
-        
-            % Compute gradients
-            gradient_g(t,1) = delta2g_chosen(t,1) * x1(t, fixedj);   % ∂g/∂W2(1,1)
-            gradient_g(t,2) = delta2g_chosen(t,1) * x2(t, fixedj);   % ∂g/∂W2(1,2)
-            gradient_g(t,3) = delta2g_chosen(t,2) * x1(t, fixedj);   % ∂g/∂W2(2,1)
-            gradient_g(t,4) = delta2g_chosen(t,2) * x2(t, fixedj);   % ∂g/∂W2(2,2)
-            gradient_g(t,5) = delta2g_chosen(t,1);                   % ∂g/∂b2(1)
-            gradient_g(t,6) = delta2g_chosen(t,2);                   % ∂g/∂b2(2)
-            gradient_g(t,7) = delta3g_chosen(t) * a2g(t,1);          % ∂g/∂W3(1,d)
-            gradient_g(t,8) = delta3g_chosen(t) * a2g(t,2);          % ∂g/∂W3(2,d)
-            gradient_g(t,9) = delta3g_chosen(t);                     % ∂g/∂b3(d)
-        end
-        
-        for coefftheta = 1:9
-            gradient_Sjdsq(coefftheta) = 0;
-            for t = 1:BigT
-                gradient_Sjdsq(coefftheta) = gradient_Sjdsq(coefftheta) + ...
-                    m(t) * Rexcess(t, fixedj) * gradient_g(t, coefftheta);
+        % Forward pass for all firms and moment conditions
+        for d = 1:BigD
+            for j = 1:BigN
+                for t = 1:BigT
+                    x = [x1(t, j); x2(t, j)];
+                    a2gtemp = activate(x, W2g, b2g);
+                    a2g(t,:) = a2gtemp;
+                    a3g(t,:,d) = activate(a2gtemp, W3g, b3g);
+                end
             end
         end
         
-        gradient_Sjdsq = fun_s_jd(Rexcess, x, fixedj, d) * gradient_Sjdsq;
+        % Initialize gradient accumulators
+        gradient_Sjdsq_total = zeros(1,9);
         
-        % Update weights and biases
-        W2g(1,1) = W2g(1,1) - eta * gradient_Sjdsq(1);
-        W2g(1,2) = W2g(1,2) - eta * gradient_Sjdsq(2);
-        W2g(2,1) = W2g(2,1) - eta * gradient_Sjdsq(3);
-        W2g(2,2) = W2g(2,2) - eta * gradient_Sjdsq(4);
+        % Process all firms and moment conditions
+        for d = 1:BigD
+            for j = 1:BigN
+                % Backward pass
+                delta3g = a3g(:,:,d) .* (1 - a3g(:,:,d));
+                delta2g = a2g .* (1 - a2g);
+                
+                for t = 1:BigT
+                    delta3g_chosen(t) = delta3g(t,d);
+                    W3g_chosen(:) = W3g(d,:);
+                    
+                    for Index_n2 = 1:n2
+                        delta2g_chosen(t, Index_n2) = ...
+                            delta2g(t, Index_n2) * W3g_chosen(Index_n2) * delta3g_chosen(t);
+                    end
+                
+                    % Compute gradients
+                    gradient_g(t,1) = delta2g_chosen(t,1) * x1(t, j);
+                    gradient_g(t,2) = delta2g_chosen(t,1) * x2(t, j);
+                    gradient_g(t,3) = delta2g_chosen(t,2) * x1(t, j);
+                    gradient_g(t,4) = delta2g_chosen(t,2) * x2(t, j);
+                    gradient_g(t,5) = delta2g_chosen(t,1);
+                    gradient_g(t,6) = delta2g_chosen(t,2);
+                    gradient_g(t,7) = delta3g_chosen(t) * a2g(t,1);
+                    gradient_g(t,8) = delta3g_chosen(t) * a2g(t,2);
+                    gradient_g(t,9) = delta3g_chosen(t);
+                end
+                
+                % Calculate gradients for this firm and moment condition
+                gradient_Sjdsq = zeros(1,9);
+                for coefftheta = 1:9
+                    gradient_Sjdsq(coefftheta) = 0;
+                    for t = 1:BigT
+                        gradient_Sjdsq(coefftheta) = gradient_Sjdsq(coefftheta) + ...
+                            m(t) * Rexcess(t, j) * gradient_g(t, coefftheta);
+                    end
+                end
+                
+                gradient_Sjdsq = fun_s_jd(Rexcess, x, j, d) * gradient_Sjdsq;
+                
+                % Accumulate gradients
+                gradient_Sjdsq_total = gradient_Sjdsq_total + gradient_Sjdsq;
+            end
+        end
         
-        b2g(1) = b2g(1) - eta * gradient_Sjdsq(5);
-        b2g(2) = b2g(2) - eta * gradient_Sjdsq(6);
+        % Average gradients over all firms and moment conditions
+        gradient_Sjdsq_total = gradient_Sjdsq_total / (BigN * BigD);
         
-        W3g(1,d) = W3g(1,d) - eta * gradient_Sjdsq(7);
-        W3g(2,d) = W3g(2,d) - eta * gradient_Sjdsq(8);
+        % Update weights and biases using full-batch gradient
+        W2g(1,1) = W2g(1,1) - eta * gradient_Sjdsq_total(1);
+        W2g(1,2) = W2g(1,2) - eta * gradient_Sjdsq_total(2);
+        W2g(2,1) = W2g(2,1) - eta * gradient_Sjdsq_total(3);
+        W2g(2,2) = W2g(2,2) - eta * gradient_Sjdsq_total(4);
         
-        b3g(d) = b3g(d) - eta * gradient_Sjdsq(9);
+        b2g(1) = b2g(1) - eta * gradient_Sjdsq_total(5);
+        b2g(2) = b2g(2) - eta * gradient_Sjdsq_total(6);
         
-        % Monitor progress (optional)
-
+        W3g(1,:) = W3g(1,:) - eta * [gradient_Sjdsq_total(7) gradient_Sjdsq_total(7)];
+        W3g(2,:) = W3g(2,:) - eta * [gradient_Sjdsq_total(8) gradient_Sjdsq_total(8)];
+        
+        b3g(:) = b3g(:) - eta * [gradient_Sjdsq_total(9); gradient_Sjdsq_total(9)];
+        
         for t = 1:BigT
             for j = 1:BigN
                 x = [x1(t,j); x2(t,j)];
@@ -268,13 +273,7 @@ function GAN20250328_GD
         for j = 1:BigN
             newcost = newcost + fun_s_j(Rexcess, x, j);
         end
-        
         savecostmax(counter) = newcost;
-        
-        savecosts = [savecostmin savecostmax];
-        storej;
-        stored;
-        
     end
     
     function s_j_val=fun_s_j(Rexcess,x,j)
@@ -312,4 +311,3 @@ function GAN20250328_GD
         y=1./(1+exp(-(W*x+b)));
     end
 end
-    
