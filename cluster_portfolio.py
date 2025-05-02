@@ -2,66 +2,71 @@ import random
 
 def clean_data(data_unformatted):
     lines = data_unformatted.strip().split('\n')
-
     headers = [h.strip() for h in lines[0].split(',')][1:]
-
     data_dicts = []
     for line in lines[1:]:
         values = [float(v.strip()) for v in line.split(',')[1:]]
         row_dict = dict(zip(headers, values))
         data_dicts.append(row_dict)
+    return data_dicts, headers
 
-    return data_dicts
-
-def kmeans(data_dicts, k=3, max_iter=100, converge_threshold=1e-4):
-    portfolio_names = list(data_dicts[0].keys())
+def kmeans(data_dicts, portfolio_names, k=3, max_iter=100, converge_threshold=1e-6):
     num_months = len(data_dicts)
-    
-    # Initialize centroids with random portfolios
+    num_portfolios = len(portfolio_names)
+
+    # initialize centroids by randomly picking three points
     centroids = []
-    for idx in random.sample(range(len(portfolio_names)), k):
-        returns = [data_dicts[month][portfolio_names[idx]] for month in range(num_months)]
+    initial_centroid_indices = random.sample(range(num_portfolios), k)
+    for idx in initial_centroid_indices:
+        portfolio_name = portfolio_names[idx]
+        returns = [data_dicts[month][portfolio_name] for month in range(num_months)]
         centroids.append(returns)
-    
+
+    assignments = [0] * num_portfolios
+
     for _ in range(max_iter):
-        # Assign clusters
+        # assign clusters based on nearest centroid
         clusters = [[] for _ in range(k)]
         for port_idx, name in enumerate(portfolio_names):
             point = [data_dicts[month][name] for month in range(num_months)]
             distances = [sum((x-y)**2 for x,y in zip(point, centroid)) for centroid in centroids]
             cluster_idx = distances.index(min(distances))
             clusters[cluster_idx].append(port_idx)
-        
-        # Update centroids
-        new_centroids = []
-        for cluster_idx, cluster in enumerate(clusters):
-            if not cluster:  # Handle empty clusters
-                new_centroids.append(centroids[cluster_idx])
+            assignments[port_idx] = cluster_idx 
+
+        # update centroids by averaging portfolios in each cluster
+        updated_centroids = []
+        centroid_movement = []
+        for cluster_idx, cluster_portfolio_indices in enumerate(clusters):
+            if not cluster_portfolio_indices:
+                updated_centroids.append(centroids[cluster_idx])
+                centroid_movement.append((centroids[cluster_idx], centroids[cluster_idx]))
                 continue
-            
-            # Calculate mean for each month
-            new_centroid = []
+
+            new_centroid = [0.0] * num_months
+            num_portfolios_in_cluster = len(cluster_portfolio_indices)
+            for port_idx in cluster_portfolio_indices:
+                portfolio_name = portfolio_names[port_idx]
+                portfolio_series = [data_dicts[month][portfolio_name] for month in range(num_months)]
+                for month in range(num_months):
+                    new_centroid[month] += portfolio_series[month]
             for month in range(num_months):
-                month_values = [data_dicts[month][portfolio_names[i]] for i in cluster]
-                new_centroid.append(sum(month_values)/len(month_values))
-            new_centroids.append(new_centroid)
-        
-        # Check for convergence
+                new_centroid[month] /= num_portfolios_in_cluster
+            updated_centroids.append(new_centroid)
+            centroid_movement.append((centroids[cluster_idx], new_centroid))
+
+        # check for convergence
         converged = True
-        for old, new in zip(centroids, new_centroids):
-            if any(abs(x-y) > converge_threshold for x,y in zip(old, new)):
+        for old_centroid, new_centroid in centroid_movement:
+            if any(abs(x-y) > converge_threshold for x,y in zip(old_centroid, new_centroid)):
                 converged = False
                 break
+        
+        centroids = updated_centroids # update centroids
+        
         if converged:
             break
-        centroids = new_centroids
-    
-    # Create final assignments
-    assignments = [0] * len(portfolio_names)
-    for cluster_idx, cluster in enumerate(clusters):
-        for port_idx in cluster:
-            assignments[port_idx] = cluster_idx
-    
+
     return assignments, centroids
 
 def run_kmeans():
@@ -72,11 +77,17 @@ def run_kmeans():
     202012,13.1824,7.8131,9.2485,8.438,7.1857,11.2639,10.0651,8.8478,8.5,6.9177,12.2766,8.6516,6.9268,9.5035,7.9595,6.8499,5.9012,4.7273,7.8074,5.438,5.3004,1.8685,3.418,3.2349,8.0465
     202101,16.6704,14.9932,8.1702,7.3884,39.7565,12.1049,5.7885,7.6529,3.723,8.9216,2.5181,0.9032,2.4192,1.8087,4.3874,-0.2722,0.6493,-0.215,2.3776,1.6662,-0.9357,-0.5953,-2.0951,0.8452,1.0989"""
 
-    cleaned_data = clean_data(data)
+    cleaned_data, portfolio_names = clean_data(data)
 
-    clusters = kmeans(cleaned_data)
+    random.seed(45) # use random seed for repeatable results
 
-    print(clusters)
+    cluster_assignments = kmeans(cleaned_data, portfolio_names)[0]
+
+    print("CLUSTERS:")
+    for cluster_num in range(3):
+        print(f"\nCluster {cluster_num + 1}:")
+        cluster_portfolios = [portfolio_names[i] for i, assignment in enumerate(cluster_assignments) if assignment == cluster_num]
+        print(", ".join(cluster_portfolios))
 
 if __name__ == '__main__':
     run_kmeans()
